@@ -67,6 +67,8 @@ library
   exposed-modules:
     Development.Shake.FPGA
     Development.Shake.FPGA.Internal
+    Development.Shake.Verilate
+    Development.Shake.Verilate.Cabal
 
   hs-source-dirs:  src
 

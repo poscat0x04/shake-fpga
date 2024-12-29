@@ -1,5 +1,3 @@
-{-# LANGUAGE ApplicativeDo #-}
-
 module Main where
 
 import Development.Shake.FPGA (shakeMain)
