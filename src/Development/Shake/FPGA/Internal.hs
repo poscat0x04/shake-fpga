@@ -61,9 +61,6 @@ data Target
   = Target
   { targetModule :: String,
     targetTopEntity :: String,
-    -- | The synthesized name of the corresponding
-    --   top-level module in the HDL
-    targetTopName :: String,
     -- | The FPGA hardware part to target
     targetPart :: String,
     -- | The supplied constraint file
@@ -105,8 +102,7 @@ lookupTarget_ :: CompiledBuildConfig -> String -> String -> Target
 lookupTarget_ c modName topEntity = fromJust $ lookupTarget c modName topEntity
 
 data StrProp
-  = TopName
-  | Part
+  = Part
   | XDC
   deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
 
@@ -130,7 +126,6 @@ rulesFor c@CompiledBuildConfig {..} = do
   _ <- addOracle $ \(StrPropQuery p (moduleName, topEntity)) -> do
     let Target {..} = lookupTarget_ c moduleName topEntity
     pure $ case p of
-      TopName -> targetTopName
       Part -> targetPart
       XDC -> targetXDC
   _ <- addOracle $ \HDLQuery -> pure hdl
@@ -188,7 +183,6 @@ rulesFor c@CompiledBuildConfig {..} = do
                 takeExtension src == "." <> extOf hdl
             ]
 
-        topName <- askOracle $ StrPropQuery TopName tref
         part <- askOracle $ StrPropQuery Part tref
         xdcFile <- askOracle (StrPropQuery XDC tref) >>= makeAbsolute'
 
@@ -197,7 +191,7 @@ rulesFor c@CompiledBuildConfig {..} = do
           #{readCommandOf hdl} #{unwords hdlSrcs}
           read_xdc #{xdcFile}
 
-          synth_design -top #{topName} -part #{part}
+          synth_design -top #{topComponent} -part #{part}
           write_checkpoint -force post_synth.dcp
           report_timing_summary -file post_synth_timing_summary.txt -rpx post_synth_timing_summary.rpx
           report_power -file post_synth_power.txt -rpx post_synth_power.rpx
@@ -274,7 +268,6 @@ $( deriveFromJSON
          fieldLabelModifier = \case
            "targetModule" -> "module"
            "targetTopEntity" -> "topEntity"
-           "targetTopName" -> "topName"
            "targetPart" -> "part"
            "targetXDC" -> "xdc"
            x -> x
