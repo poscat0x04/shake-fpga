@@ -22,6 +22,7 @@ common common-attrs
   default-language:   GHC2021
   default-extensions:
     NoStarIsType
+    ApplicativeDo
     ConstraintKinds
     DataKinds
     DefaultSignatures
@@ -55,6 +56,7 @@ library
     , clash-lib
     , containers
     , directory
+    , optparse-applicative
     , shake
     , string-interpolate
     , text
@@ -74,7 +76,6 @@ executable shake-fpga
   ghc-options:   -dynamic
   build-depends:
     , base
-    , optparse-applicative
     , shake-fpga
 
 test-suite shake-fpga-test
