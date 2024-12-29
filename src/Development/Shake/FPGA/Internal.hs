@@ -182,7 +182,7 @@ rulesFor c@CompiledBuildConfig {..} = do
         _hdl <- askOracle HDLQuery
         Just Manifest {..} <- liftIO $ readManifest manifestFile
         hdlSrcs <-
-          mapM (liftIO . makeAbsolute) $
+          mapM makeAbsolute' $
             [ targetClashDir </> src
               | (src, _) <- fileNames,
                 takeExtension src == extOf hdl
@@ -190,7 +190,7 @@ rulesFor c@CompiledBuildConfig {..} = do
 
         topName <- askOracle $ StrPropQuery TopName tref
         part <- askOracle $ StrPropQuery Part tref
-        xdcFile <- askOracle (StrPropQuery XDC tref) >>= liftIO . makeAbsolute
+        xdcFile <- askOracle (StrPropQuery XDC tref) >>= makeAbsolute'
 
         let file =
               [__i|
@@ -231,7 +231,7 @@ rulesFor c@CompiledBuildConfig {..} = do
 
       bitstreamFile %> \_out -> do
         need [tclScript]
-        script <- liftIO $ makeAbsolute tclScript
+        script <- makeAbsolute' tclScript
         cmd_ (Cwd vivadoDir) "vivado" "-mode" "batch" "-source" script
       where
         targetClashDir = clashDir </> modName <.> topEntity
@@ -259,6 +259,9 @@ rulesFor c@CompiledBuildConfig {..} = do
           Verilog -> "read_verilog"
           SystemVerilog -> "read_verilog -sv"
           VHDL -> "read_vhdl"
+
+        makeAbsolute' :: FilePath -> Action FilePath
+        makeAbsolute' = liftIO . makeAbsolute
 
 instance FromJSON HDL where
   omittedField = Just SystemVerilog
