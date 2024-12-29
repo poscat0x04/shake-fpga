@@ -1,0 +1,8 @@
+cradle:
+  cabal:
+    - path: "./src"
+      component: "lib:shake-fpga"
+    - path: "./app"
+      component: "exe:shake-fpga"
+    - path: "./test"
+      component: "test:shake-fpga-test"

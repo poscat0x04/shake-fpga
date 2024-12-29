@@ -1,0 +1,86 @@
+cabal-version:   3.0
+name:            shake-fpga
+version:         0.1.0
+
+-- synopsis:
+-- description:
+-- category:
+license:         BSD-3-Clause
+license-file:    LICENSE
+author:          poscat
+maintainer:      poscat <poscat@poscat.moe>
+copyright:       Copyright (c) poscat 2024
+stability:       alpha
+homepage:        https://github.com//shake-fpga
+bug-reports:     https://github.com//shake-fpga/issues
+extra-doc-files:
+  CHANGELOG.md
+  README.md
+
+common common-attrs
+  build-depends:      base >=4.10 && <5
+  default-language:   GHC2021
+  default-extensions:
+    NoStarIsType
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DerivingStrategies
+    DuplicateRecordFields
+    FunctionalDependencies
+    GADTs
+    LambdaCase
+    MultiWayIf
+    NamedFieldPuns
+    PartialTypeSignatures
+    PatternSynonyms
+    QuantifiedConstraints
+    QuasiQuotes
+    RecordWildCards
+    RoleAnnotations
+    StandaloneKindSignatures
+    TemplateHaskell
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    ViewPatterns
+
+library
+  import:          common-attrs
+  build-depends:
+    , aeson
+    , base
+    , clash-ghc
+    , clash-lib
+    , containers
+    , shake
+    , string-interpolate
+    , text
+    , yaml
+
+  -- cabal-fmt: expand src -Development.Shake.FPGA.Internal
+
+  exposed-modules: Development.Shake.FPGA
+  other-modules:   Development.Shake.FPGA.Internal
+  hs-source-dirs:  src
+
+executable shake-fpga
+  import:        common-attrs
+  main-is:       app/Main.hs
+  ghc-options:   -dynamic
+  build-depends:
+    , base
+    , optparse-applicative
+    , shake-fpga
+
+test-suite shake-fpga-test
+  import:         common-attrs
+  type:           exitcode-stdio-1.0
+  build-depends:  shake-fpga
+  hs-source-dirs: test
+  main-is:        Spec.hs
+
+source-repository head
+  type:     git
+  location: https://github.com//shake-fpga
