@@ -59,7 +59,6 @@ library
     , optparse-applicative
     , shake
     , string-interpolate
-    , text
     , yaml
 
   -- cabal-fmt: expand src

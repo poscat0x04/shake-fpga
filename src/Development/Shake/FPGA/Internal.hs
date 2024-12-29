@@ -39,7 +39,6 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as M
 import Data.Maybe (fromJust)
 import Data.String.Interpolate (__i)
-import Data.Text qualified as T
 import Data.Yaml (decodeFileEither)
 import Development.Shake
 import Development.Shake.Classes (Binary, Hashable, NFData)
@@ -182,8 +181,12 @@ rulesFor c@CompiledBuildConfig {..} = do
         -- Determine the HDL sources from clash-manifest.json
         _hdl <- askOracle HDLQuery
         Just Manifest {..} <- liftIO $ readManifest manifestFile
-        let hdlSrcs = [targetClashDir </> T.unpack src <.> extOf hdl | src <- componentNames]
-        hdlSrcs' <- liftIO $ mapM makeAbsolute hdlSrcs
+        hdlSrcs <-
+          mapM (liftIO . makeAbsolute) $
+            [ targetClashDir </> src
+              | (src, _) <- fileNames,
+                takeExtension src == extOf hdl
+            ]
 
         topName <- askOracle $ StrPropQuery TopName tref
         part <- askOracle $ StrPropQuery Part tref
@@ -191,7 +194,7 @@ rulesFor c@CompiledBuildConfig {..} = do
 
         let file =
               [__i|
-          #{readCommandOf hdl} #{unwords hdlSrcs'}
+          #{readCommandOf hdl} #{unwords hdlSrcs}
           read_xdc #{xdcFile}
 
           synth_design -top #{topName} -part #{part}
