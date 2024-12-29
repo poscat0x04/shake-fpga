@@ -1,4 +1,27 @@
-module Development.Shake.FPGA.Internal where
+module Development.Shake.FPGA.Internal
+  ( -- * Types
+    HDL (..),
+    Target (..),
+    TargetRef,
+
+    -- * Build Configuration
+    BuildConfig (..),
+    CompiledBuildConfig (..),
+    compile,
+    lookupTarget,
+    lookupTarget_,
+
+    -- * Shake rules from configuration
+    rulesFor,
+    rulesFromFile,
+    shakeFromFile,
+
+    -- * Query types used for @addOracle@
+    StrProp (..),
+    StrPropQuery (..),
+    HDLQuery (..),
+  )
+where
 
 import Clash.Driver.Manifest (Manifest (..), readManifest)
 import Clash.Main (defaultMain)

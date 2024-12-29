@@ -59,10 +59,12 @@ library
     , text
     , yaml
 
-  -- cabal-fmt: expand src -Development.Shake.FPGA.Internal
+  -- cabal-fmt: expand src
 
-  exposed-modules: Development.Shake.FPGA
-  other-modules:   Development.Shake.FPGA.Internal
+  exposed-modules:
+    Development.Shake.FPGA
+    Development.Shake.FPGA.Internal
+
   hs-source-dirs:  src
 
 executable shake-fpga
