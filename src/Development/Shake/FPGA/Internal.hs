@@ -185,7 +185,7 @@ rulesFor c@CompiledBuildConfig {..} = do
           mapM makeAbsolute' $
             [ targetClashDir </> src
               | (src, _) <- fileNames,
-                takeExtension src == extOf hdl
+                takeExtension src == "." <> extOf hdl
             ]
 
         topName <- askOracle $ StrPropQuery TopName tref
