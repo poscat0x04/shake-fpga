@@ -261,7 +261,14 @@ instance FromJSON HDL where
 $( deriveFromJSON
      defaultOptions
        { allowOmittedFields = True,
-         omitNothingFields = True
+         omitNothingFields = True,
+         fieldLabelModifier = \case
+           "targetModule" -> "module"
+           "targetTopEntity" -> "topEntity"
+           "targetTopName" -> "topName"
+           "targetPart" -> "part"
+           "targetXDC" -> "xdc"
+           x -> x
        }
      ''Target
  )
