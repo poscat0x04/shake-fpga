@@ -46,6 +46,7 @@ import Development.Shake.Classes (Binary, Hashable, NFData)
 import Development.Shake.FilePath (takeExtension, (<.>), (</>))
 import Development.Shake.Util (parseMakefile)
 import GHC.Generics (Generic)
+import System.Directory (makeAbsolute)
 
 data HDL
   = Verilog
@@ -182,14 +183,15 @@ rulesFor c@CompiledBuildConfig {..} = do
         _hdl <- askOracle HDLQuery
         Just Manifest {..} <- liftIO $ readManifest manifestFile
         let hdlSrcs = [targetClashDir </> T.unpack src <.> extOf hdl | src <- componentNames]
+        hdlSrcs' <- liftIO $ mapM makeAbsolute hdlSrcs
 
         topName <- askOracle $ StrPropQuery TopName tref
         part <- askOracle $ StrPropQuery Part tref
-        xdcFile <- askOracle $ StrPropQuery XDC tref
+        xdcFile <- askOracle (StrPropQuery XDC tref) >>= liftIO . makeAbsolute
 
         let file =
               [__i|
-          #{readCommandOf hdl} #{unwords hdlSrcs}
+          #{readCommandOf hdl} #{unwords hdlSrcs'}
           read_xdc #{xdcFile}
 
           synth_design -top #{topName} -part #{part}
@@ -226,7 +228,8 @@ rulesFor c@CompiledBuildConfig {..} = do
 
       bitstreamFile %> \_out -> do
         need [tclScript]
-        cmd_ (Cwd vivadoDir) "vivado" "-mode" "batch" "-source" tclScript
+        script <- liftIO $ makeAbsolute tclScript
+        cmd_ (Cwd vivadoDir) "vivado" "-mode" "batch" "-source" script
       where
         targetClashDir = clashDir </> modName <.> topEntity
         manifestFile = targetClashDir </> "clash-manifest.json"

@@ -54,6 +54,7 @@ library
     , clash-ghc
     , clash-lib
     , containers
+    , directory
     , shake
     , string-interpolate
     , text
