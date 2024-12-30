@@ -32,6 +32,7 @@ import Data.Aeson
     genericParseJSON,
   )
 import Data.Aeson.TH (deriveFromJSON)
+import Data.Coerce (coerce)
 import Data.Data (Typeable)
 import Data.List (nub)
 import Data.Map.Strict (Map)
@@ -42,6 +43,7 @@ import Data.Text qualified as T
 import Data.Yaml (decodeFileEither)
 import Development.Shake
 import Development.Shake.Classes (Binary, Hashable, NFData)
+import Development.Shake.FPGA.Utils (DBool (..))
 import Development.Shake.FilePath (takeExtension, (<.>), (</>))
 import Development.Shake.Util (parseMakefile)
 import GHC.Generics (Generic)
@@ -66,7 +68,8 @@ data Target
     -- | The supplied constraint file
     targetXDC :: String,
     -- | Alias for the target, will be used to generate phony rules if set
-    targetAlias :: Maybe String
+    targetAlias :: Maybe String,
+    targetGUI :: DBool 'False
   }
   deriving (Eq, Show, Generic)
 
@@ -109,6 +112,19 @@ data StrPropQuery
   deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
 
 type instance RuleResult StrPropQuery = String
+
+data BoolProp
+  = GUI
+  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+
+data BoolPropQuery
+  = BoolPropQuery
+  { prop :: BoolProp,
+    target :: TargetRef
+  }
+  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+
+type instance RuleResult BoolPropQuery = Bool
 
 data HDLQuery = HDLQuery
   deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
@@ -160,6 +176,10 @@ rulesFor CompiledBuildConfig {..} = do
     pure $ case p of
       Part -> targetPart
       XDC -> targetXDC
+  _ <- addOracle $ \(BoolPropQuery p tref) -> do
+    let Target {..} = fromJust $ M.lookup tref targetsMap
+    pure $ case p of
+      GUI -> coerce targetGUI
   _ <- addOracle $ \HDLQuery -> pure hdl
   _ <- addOracle $ \ToolChainQuery -> lookupToolChain ToolChainQuery
 
@@ -223,17 +243,27 @@ rulesFor CompiledBuildConfig {..} = do
 
         part <- askOracle $ StrPropQuery Part tref
         xdcFile <- askOracle (StrPropQuery XDC tref) >>= makeAbsolute'
+        gui <- askOracle $ BoolPropQuery GUI tref
 
         let file =
               [__i|
+          set_param general.maxThreads 8
+          #{if gui then "start_gui" else ""}
+
           #{readCommandOf hdl} #{unwords hdlSrcs}
           read_xdc #{xdcFile}
 
+          if {[file exists post_synth.dcp]} {
+            read_checkpoint -incremental -auto_incremental post_synth.dcp
+          }
           synth_design -top #{topComponent} -part #{part}
           write_checkpoint -force post_synth.dcp
           report_timing_summary -file post_synth_timing_summary.txt -rpx post_synth_timing_summary.rpx
           report_power -file post_synth_power.txt -rpx post_synth_power.rpx
 
+          if {[file exists post_place.dcp]} {
+            read_checkpoint -incremental -auto_incremental post_place.dcp
+          }
           opt_design
           place_design
           phys_opt_design
@@ -242,6 +272,9 @@ rulesFor CompiledBuildConfig {..} = do
             -file post_place_timing_summary.txt \\
             -rpx post_place_timing_summary.rpx
 
+          if {[file exists post_route.dcp]} {
+            read_checkpoint -incremental -auto_incremental post_route.dcp
+          }
           route_design
           write_checkpoint -force post_route.dcp
           report_timing_summary \\
@@ -364,6 +397,7 @@ $( deriveFromJSON
            "targetPart" -> "part"
            "targetXDC" -> "xdc"
            "targetAlias" -> "alias"
+           "targetGUI" -> "gui"
            x -> x
        }
      ''Target
