@@ -308,7 +308,8 @@ rulesFor CompiledBuildConfig {..} = do
               unwords
                 [ "CXX=" <> cxx,
                   "CC=" <> cc,
-                  "OPT_FAST=\"-O3\"",
+                  "OPT_FAST=\"-O3 -march=native\"",
+                  "OPT_SLOW=\"-march=native\"",
                   "OPT_GLOBAL=\"-march=native\""
                 ]
         cmd_
