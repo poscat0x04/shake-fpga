@@ -420,11 +420,16 @@ rulesFromFile file = do
   rulesFor $ compile config
 
 shakeFromFile :: FilePath -> IO ()
-shakeFromFile file = shakeArgs shakeOptions {shakeFiles = buildDir} $ do
-  phony "clean" $ do
-    putNormal $ "Cleaning files in " <> buildDir
-    removeFilesAfter buildDir ["//*"]
+shakeFromFile file = shakeArgs
+  shakeOptions
+    { shakeFiles = buildDir,
+      shakeThreads = 0
+    }
+  $ do
+    phony "clean" $ do
+      putNormal $ "Cleaning files in " <> buildDir
+      removeFilesAfter buildDir ["//*"]
 
-  rulesFromFile file
+    rulesFromFile file
   where
     buildDir = "_build"
