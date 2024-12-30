@@ -40,6 +40,7 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as M
 import Data.Maybe (fromJust)
 import Data.String.Interpolate (__i)
+import Data.Text qualified as T
 import Data.Yaml (decodeFileEither)
 import Development.Shake
 import Development.Shake.Classes (Binary, Hashable, NFData)
@@ -65,7 +66,9 @@ data Target
     -- | The FPGA hardware part to target
     targetPart :: String,
     -- | The supplied constraint file
-    targetXDC :: String
+    targetXDC :: String,
+    -- | Alias for the target, will be used to generate phony targets if set
+    targetAlias :: Maybe String
   }
   deriving (Eq, Show, Generic)
 
@@ -128,6 +131,7 @@ data ToolChainQuery
 data ToolChain
   = ToolChain
   { cc :: FilePath,
+    cxx :: FilePath,
     ld :: FilePath,
     ar :: FilePath
   }
@@ -141,9 +145,12 @@ lookupToolChain _ = do
   mbAr <- findExecutable' "ar"
   mbClang <- findExecutable' "clang"
   mbCc <- findExecutable' "cc"
+  mbClangxx <- findExecutable' "clang++"
+  mbCxx <- findExecutable' "c++"
   ld <- mbLd `abort` "ld not found"
   ar <- mbAr `abort` "ar not found"
   cc <- (mbClang <|> mbCc) `abort` "cc not found"
+  cxx <- (mbClangxx <|> mbCxx) `abort` "c++ not found"
   pure ToolChain {..}
   where
     findExecutable' = liftIO . findExecutable
@@ -163,6 +170,7 @@ rulesFor c@CompiledBuildConfig {..} = do
       Part -> targetPart
       XDC -> targetXDC
   _ <- addOracle $ \HDLQuery -> pure hdl
+  _ <- addOracle $ \ToolChainQuery -> lookupToolChain ToolChainQuery
 
   let mods = nub $ map fst targets
 
@@ -202,7 +210,10 @@ rulesFor c@CompiledBuildConfig {..} = do
 
         _hdl <- askOracle HDLQuery
         -- synthesize using clash
-        clash $ clashFlagOf hdl <> ["-main-is", topEntity, modName]
+        clash $
+          clashFlagOf hdl
+            <> ["-fclash-compile-ultra"]
+            <> ["-main-is", topEntity, modName]
 
       tclScript %> \out -> do
         need [manifestFile]
@@ -263,7 +274,40 @@ rulesFor c@CompiledBuildConfig {..} = do
         cmd_ (Cwd vivadoDir) "vivado" "-mode" "batch" "-source" script
 
       libVmodel %> \_out -> do
-        cmd_ "verilator --cc"
+        need [manifestFile]
+        Just Manifest {..} <- liftIO $ readManifest manifestFile
+        ToolChain {..} <- askOracle ToolChainQuery
+        let top = T.unpack topComponent
+        let makeFlags =
+              unwords
+                [ "CXX=" <> cxx,
+                  "CC=" <> cc,
+                  "OPT_FAST=\"-O3\"",
+                  "OPT_GLOBAL=\"-march=native\""
+                ]
+        cmd_
+          "verilator --cc --build --prefix Vmodel"
+          -- use all threads for compilation
+          "-j 0"
+          -- generate FST waveform
+          "--trace-fst --trace-structs"
+          -- optimization flags
+          -- see: https://verilator.org/guide/latest/simulating.html#benchmarking-optimization
+          -- verilator codegen
+          "-O3 --x-assign fast --x-initial fast --noassert"
+          -- c++ compiler flags
+          ["--MAKEFLAGS", makeFlags]
+          -- clash currently generates verilog 2001 and systemverilog 2012
+          -- see: https://clash-lang.readthedocs.io/en/latest/developing-hardware/flags.html
+          "+1364-2001ext+v"
+          "+1800-2012ext+sv"
+          "-Mdir"
+          verilatorDir
+          "-y"
+          clashDir
+          "--top-module"
+          top
+          top
 
       libverilated %> \_out -> do
         need [libVmodel]
