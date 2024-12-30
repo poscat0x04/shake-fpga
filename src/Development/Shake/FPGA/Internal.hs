@@ -17,7 +17,14 @@ module Development.Shake.FPGA.Internal
     -- * Query types used for @addOracle@
     StrProp (..),
     StrPropQuery (..),
+    BoolProp (..),
+    BoolPropQuery (..),
     HDLQuery (..),
+    ToolChain (..),
+    ToolChainQuery (..),
+
+    -- * Utilities
+    lookupToolChain,
   )
 where
 
@@ -98,75 +105,6 @@ data CompiledBuildConfig
     hdl :: HDL
   }
   deriving (Eq, Show, Generic)
-
-data StrProp
-  = Part
-  | XDC
-  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
-
-data StrPropQuery
-  = StrPropQuery
-  { prop :: StrProp,
-    target :: TargetRef
-  }
-  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
-
-type instance RuleResult StrPropQuery = String
-
-data BoolProp
-  = GUI
-  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
-
-data BoolPropQuery
-  = BoolPropQuery
-  { prop :: BoolProp,
-    target :: TargetRef
-  }
-  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
-
-type instance RuleResult BoolPropQuery = Bool
-
-data HDLQuery = HDLQuery
-  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
-
-type instance RuleResult HDLQuery = HDL
-
-data ToolChainQuery
-  = ToolChainQuery
-  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
-
-data ToolChain
-  = ToolChain
-  { cc :: FilePath,
-    cxx :: FilePath,
-    ld :: FilePath,
-    ar :: FilePath
-  }
-  deriving (Show, Eq, Typeable, Generic, Hashable, Binary, NFData)
-
-type instance RuleResult ToolChainQuery = ToolChain
-
-lookupToolChain :: ToolChainQuery -> Action ToolChain
-lookupToolChain _ = do
-  mbLd <- findExecutable' "ld"
-  mbAr <- findExecutable' "ar"
-  mbClang <- findExecutable' "clang"
-  mbCc <- findExecutable' "cc"
-  mbClangxx <- findExecutable' "clang++"
-  mbCxx <- findExecutable' "c++"
-  ld <- mbLd `abort` "ld not found"
-  ar <- mbAr `abort` "ar not found"
-  cc <- (mbClang <|> mbCc) `abort` "cc not found"
-  cxx <- (mbClangxx <|> mbCxx) `abort` "c++ not found"
-  pure ToolChain {..}
-  where
-    findExecutable' = liftIO . findExecutable
-
-    abort :: Maybe a -> String -> Action a
-    abort m msg = do
-      case m of
-        Just x -> pure x
-        Nothing -> fail msg
 
 rulesFor :: CompiledBuildConfig -> Rules ()
 rulesFor CompiledBuildConfig {..} = do
@@ -383,6 +321,75 @@ rulesFor CompiledBuildConfig {..} = do
 
         makeAbsolute' :: FilePath -> Action FilePath
         makeAbsolute' = liftIO . makeAbsolute
+
+data StrProp
+  = Part
+  | XDC
+  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+
+data StrPropQuery
+  = StrPropQuery
+  { prop :: StrProp,
+    target :: TargetRef
+  }
+  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+
+type instance RuleResult StrPropQuery = String
+
+data BoolProp
+  = GUI
+  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+
+data BoolPropQuery
+  = BoolPropQuery
+  { prop :: BoolProp,
+    target :: TargetRef
+  }
+  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+
+type instance RuleResult BoolPropQuery = Bool
+
+data HDLQuery = HDLQuery
+  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+
+type instance RuleResult HDLQuery = HDL
+
+data ToolChainQuery
+  = ToolChainQuery
+  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+
+data ToolChain
+  = ToolChain
+  { cc :: FilePath,
+    cxx :: FilePath,
+    ld :: FilePath,
+    ar :: FilePath
+  }
+  deriving (Show, Eq, Typeable, Generic, Hashable, Binary, NFData)
+
+type instance RuleResult ToolChainQuery = ToolChain
+
+lookupToolChain :: ToolChainQuery -> Action ToolChain
+lookupToolChain _ = do
+  mbLd <- findExecutable' "ld"
+  mbAr <- findExecutable' "ar"
+  mbClang <- findExecutable' "clang"
+  mbCc <- findExecutable' "cc"
+  mbClangxx <- findExecutable' "clang++"
+  mbCxx <- findExecutable' "c++"
+  ld <- mbLd `abort` "ld not found"
+  ar <- mbAr `abort` "ar not found"
+  cc <- (mbClang <|> mbCc) `abort` "cc not found"
+  cxx <- (mbClangxx <|> mbCxx) `abort` "c++ not found"
+  pure ToolChain {..}
+  where
+    findExecutable' = liftIO . findExecutable
+
+    abort :: Maybe a -> String -> Action a
+    abort m msg = do
+      case m of
+        Just x -> pure x
+        Nothing -> fail msg
 
 instance FromJSON HDL where
   omittedField = Just SystemVerilog
