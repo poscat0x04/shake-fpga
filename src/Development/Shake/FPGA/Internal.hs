@@ -8,8 +8,6 @@ module Development.Shake.FPGA.Internal
     BuildConfig (..),
     CompiledBuildConfig (..),
     compile,
-    lookupTarget,
-    lookupTarget_,
 
     -- * Shake rules from configuration
     rulesFor,
@@ -67,7 +65,7 @@ data Target
     targetPart :: String,
     -- | The supplied constraint file
     targetXDC :: String,
-    -- | Alias for the target, will be used to generate phony targets if set
+    -- | Alias for the target, will be used to generate phony rules if set
     targetAlias :: Maybe String
   }
   deriving (Eq, Show, Generic)
@@ -97,13 +95,6 @@ data CompiledBuildConfig
     hdl :: HDL
   }
   deriving (Eq, Show, Generic)
-
-lookupTarget :: CompiledBuildConfig -> String -> String -> Maybe Target
-lookupTarget CompiledBuildConfig {..} modName topEntity =
-  M.lookup (modName, topEntity) targetsMap
-
-lookupTarget_ :: CompiledBuildConfig -> String -> String -> Target
-lookupTarget_ c modName topEntity = fromJust $ lookupTarget c modName topEntity
 
 data StrProp
   = Part
@@ -162,10 +153,10 @@ lookupToolChain _ = do
         Nothing -> fail msg
 
 rulesFor :: CompiledBuildConfig -> Rules ()
-rulesFor c@CompiledBuildConfig {..} = do
+rulesFor CompiledBuildConfig {..} = do
   -- So that shake can rebuild when properties change
-  _ <- addOracle $ \(StrPropQuery p (moduleName, topEntity)) -> do
-    let Target {..} = lookupTarget_ c moduleName topEntity
+  _ <- addOracle $ \(StrPropQuery p tref) -> do
+    let Target {..} = fromJust $ M.lookup tref targetsMap
     pure $ case p of
       Part -> targetPart
       XDC -> targetXDC
