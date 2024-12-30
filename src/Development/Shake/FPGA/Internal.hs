@@ -169,7 +169,9 @@ rulesFor CompiledBuildConfig {..} = do
     rulesForModule modName
 
   forM_ targets $ \t ->
-    rulesForTarget t
+    rulesForTarget t $ do
+      Target {..} <- M.lookup t targetsMap
+      targetAlias
   where
     buildDir = "_build"
     clashDir = buildDir </> "clash"
@@ -189,8 +191,8 @@ rulesFor CompiledBuildConfig {..} = do
           clash ["-M", "-dep-suffix", "", "-dep-makefile", temp, modName]
           copyFileChanged temp out
 
-    rulesForTarget :: TargetRef -> Rules ()
-    rulesForTarget tref@(modName, topEntity) = do
+    rulesForTarget :: TargetRef -> Maybe String -> Rules ()
+    rulesForTarget tref@(modName, topEntity) mAlias = do
       manifestFile %> \_out -> do
         -- To correctly specify dependencies
         need [depMkFile modName]
@@ -295,13 +297,25 @@ rulesFor CompiledBuildConfig {..} = do
           "-Mdir"
           verilatorDir
           "-y"
-          clashDir
+          targetClashDir
           "--top-module"
           top
           top
 
       libverilated %> \_out -> do
         need [libVmodel]
+
+      -- phony rules when aliases are defined
+      forM_ mAlias $ \alias -> do
+        let tgt n = alias <> ":" <> n
+        let bitT = tgt "bit"
+        let verilateT = tgt "verilate"
+        let clashT = tgt "clash"
+        phony bitT $ need [bitstreamFile]
+        phony verilateT $ need [libVmodel]
+        phony clashT $ need [manifestFile]
+        phony alias $
+          need [bitT, verilateT, clashT]
       where
         targetClashDir = clashDir </> modName <.> topEntity
         manifestFile = targetClashDir </> "clash-manifest.json"
@@ -349,6 +363,7 @@ $( deriveFromJSON
            "targetTopEntity" -> "topEntity"
            "targetPart" -> "part"
            "targetXDC" -> "xdc"
+           "targetAlias" -> "alias"
            x -> x
        }
      ''Target
