@@ -261,14 +261,24 @@ rulesFor c@CompiledBuildConfig {..} = do
         need [tclScript]
         script <- makeAbsolute' tclScript
         cmd_ (Cwd vivadoDir) "vivado" "-mode" "batch" "-source" script
+
+      libVmodel %> \_out -> do
+        cmd_ "verilator --cc"
+
+      libverilated %> \_out -> do
+        need [libVmodel]
       where
         targetClashDir = clashDir </> modName <.> topEntity
         manifestFile = targetClashDir </> "clash-manifest.json"
 
         tclScript = buildDir </> modName <.> topEntity <.> "tcl"
 
-        vivadoDir = buildDir </> "vivado" </> modName <.> topEntity
+        vivadoDir = buildDir </> "vivado" </> modName </> topEntity
         bitstreamFile = vivadoDir </> "out.bit"
+
+        verilatorDir = buildDir </> "verilate" </> modName </> topEntity
+        libverilated = verilatorDir </> "libverilated.a"
+        libVmodel = verilatorDir </> "libVmodel.a"
 
         clashFlagOf :: HDL -> [String]
         clashFlagOf = \case
