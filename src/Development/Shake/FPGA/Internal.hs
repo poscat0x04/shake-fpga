@@ -25,6 +25,7 @@ where
 
 import Clash.Driver.Manifest (Manifest (..), readManifest)
 import Clash.Main (defaultMain)
+import Control.Applicative ((<|>))
 import Control.Monad (forM_)
 import Data.Aeson
   ( FromJSON (..),
@@ -45,7 +46,7 @@ import Development.Shake.Classes (Binary, Hashable, NFData)
 import Development.Shake.FilePath (takeExtension, (<.>), (</>))
 import Development.Shake.Util (parseMakefile)
 import GHC.Generics (Generic)
-import System.Directory (makeAbsolute)
+import System.Directory (findExecutable, makeAbsolute)
 
 data HDL
   = Verilog
@@ -119,6 +120,39 @@ data HDLQuery = HDLQuery
   deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
 
 type instance RuleResult HDLQuery = HDL
+
+data ToolChainQuery
+  = ToolChainQuery
+  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+
+data ToolChain
+  = ToolChain
+  { cc :: FilePath,
+    ld :: FilePath,
+    ar :: FilePath
+  }
+  deriving (Show, Eq, Typeable, Generic, Hashable, Binary, NFData)
+
+type instance RuleResult ToolChainQuery = ToolChain
+
+lookupToolChain :: ToolChainQuery -> Action ToolChain
+lookupToolChain _ = do
+  mbLd <- findExecutable' "ld"
+  mbAr <- findExecutable' "ar"
+  mbClang <- findExecutable' "clang"
+  mbCc <- findExecutable' "cc"
+  ld <- mbLd `abort` "ld not found"
+  ar <- mbAr `abort` "ar not found"
+  cc <- (mbClang <|> mbCc) `abort` "cc not found"
+  pure ToolChain {..}
+  where
+    findExecutable' = liftIO . findExecutable
+
+    abort :: Maybe a -> String -> Action a
+    abort m msg = do
+      case m of
+        Just x -> pure x
+        Nothing -> fail msg
 
 rulesFor :: CompiledBuildConfig -> Rules ()
 rulesFor c@CompiledBuildConfig {..} = do
