@@ -28,10 +28,10 @@ module Development.Shake.FPGA.Internal
   )
 where
 
-import Clash.Driver.Manifest (Manifest (..), readManifest)
+import Clash.Driver.Manifest (Manifest (..), ManifestPort (..), PortDirection (..), readManifest)
 import Clash.Main (defaultMain)
 import Control.Applicative ((<|>))
-import Control.Monad (forM_)
+import Control.Monad (forM, forM_, when)
 import Data.Aeson
   ( FromJSON (..),
     Options (..),
@@ -41,11 +41,13 @@ import Data.Aeson
 import Data.Aeson.TH (deriveFromJSON)
 import Data.Coerce (coerce)
 import Data.Data (Typeable)
-import Data.List (nub)
+import Data.Functor ((<&>))
+import Data.List (nub, partition)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as M
 import Data.Maybe (fromJust)
 import Data.String.Interpolate (__i)
+import Data.Text (pack, unpack)
 import Data.Text qualified as T
 import Data.Yaml (decodeFileEither)
 import Development.Shake
@@ -120,6 +122,13 @@ rulesFor CompiledBuildConfig {..} = do
       GUI -> coerce targetGUI
   _ <- addOracle $ \HDLQuery -> pure hdl
   _ <- addOracle $ \ToolChainQuery -> lookupToolChain ToolChainQuery
+  _ <- addOracle $ \VerilatorFlagsQuery -> do
+    mPkgConfig <- liftIO $ findExecutable "pkg-config"
+    case mPkgConfig of
+      Nothing -> fail "pkg-config not found"
+      Just pkgConfig -> do
+        StdoutTrim out <- cmd pkgConfig "--cflags" "verilator"
+        pure out
 
   let mods = nub $ map fst targets
 
@@ -240,8 +249,12 @@ rulesFor CompiledBuildConfig {..} = do
       libVmodel %> \_out -> do
         need [manifestFile]
         Just Manifest {..} <- liftIO $ readManifest manifestFile
+
+        when (any (\ManifestPort {..} -> mpDirection == InOut) ports) $
+          fail "inout ports are not supported on the boundary"
+
         ToolChain {..} <- askOracle ToolChainQuery
-        let top = T.unpack topComponent
+        let top = unpack topComponent
         let makeFlags =
               unwords
                 [ "CXX=" <> cxx,
@@ -277,6 +290,134 @@ rulesFor CompiledBuildConfig {..} = do
       libverilated %> \_out -> do
         need [libVmodel]
 
+      libVmodelCHeader %> \out -> do
+        need [manifestFile]
+        Just Manifest {..} <- liftIO $ readManifest manifestFile
+
+        let (_, inNonClockPorts, outPorts) = classifyPorts ports
+
+        inputMembers <- fmap unlines $ forM inNonClockPorts $ \p@ManifestPort {..} -> do
+          rep <- guessPortRep p
+          pure [__i|#{cTypeOf rep} #{mpName};|]
+        outputMembers <- fmap unlines $ forM outPorts $ \p@ManifestPort {..} -> do
+          rep <- guessPortRep p
+          pure [__i|#{cTypeOf rep} #{mpName};|]
+
+        let source =
+              [__i|
+          \#pragma once
+          \#ifdef __cplusplus
+          \#include "Vmodel.h"
+          \#include <memory>
+          \#else
+          \#include <stdint.h>
+          \#endif
+
+
+          struct Input {
+          #{inputMembers}
+          };
+
+          struct Output {
+          #{outputMembers}
+          };
+
+          \#ifdef __cplusplus
+          class SimModel final {
+            Vmodel* model_p;
+            VerilatedContext* context_p;
+          public:
+            SimModel();
+            ~SimModel();
+            void step(const Input *inp, Output *out);
+          };
+          \#else
+          struct SimModel;
+          typedef struct SimModel SimModel;
+          typedef struct Input Input;
+          typedef struct Output Output;
+          \#endif
+
+          \#ifdef __cplusplus
+          extern "C" {
+          \#endif
+            SimModel* startModel();
+            void stopModel(SimModel* model);
+            void stepModel(SimModel* model, Input* inp, Output* out);
+          \#ifdef __cplusplus
+          }
+          \#endif
+        |]
+        liftIO $ writeFile out source
+
+      libVmodelCSource %> \out -> do
+        need [manifestFile]
+        Just Manifest {..} <- liftIO $ readManifest manifestFile
+
+        let (inClockPorts, inNonClockPorts, outPorts) = classifyPorts ports
+        clock <- case inClockPorts of
+          [p] -> pure p
+          -- TODO: add combinatorial circuit support
+          [] -> fail "no clock input found: combinatorial circuits are currently not supported"
+          -- TODO: add multi domain clock input support
+          _ -> fail "multiple clock inputs found: multi domain clock inputs are currently not supported"
+
+        let setInput = unlines $ inNonClockPorts <&> \ManifestPort {..} -> [__i|model_p->#{mpName} = inp->#{mpName};|]
+        let readOutput = unlines $ outPorts <&> \ManifestPort {..} -> [__i|out->#{mpName} = model_p->#{mpName};|]
+
+        let source =
+              [__i|
+          \#include "Vmodel-c.h"
+
+          SimModel::SimModel() {
+            context_p = new VerilatedContext();
+            model_p = new Vmodel(context_p, "model");
+          }
+
+          SimModel::~SimModel() {
+            delete model_p;
+            delete context_p;
+          };
+
+          void SimModel::step(const Input *inp, Output *out) {
+            // set input
+          #{setInput}
+            // tick clock
+            model_p->#{mpName clock} = true;
+            model_p->eval();
+            context_p->timeInc(1);
+            model_p->#{mpName clock} = false;
+            model_p->eval();
+            context_p->timeInc(1);
+            // read output
+          #{readOutput}
+          }
+
+          extern "C" {
+            SimModel* startModel() {
+              return new SimModel();
+            }
+            void stopModel(SimModel* model) {
+              delete model;
+            }
+            void stepModel(SimModel* model, Input* inp, Output* out) {
+              model->step(inp, out);
+            }
+          }
+        |]
+        liftIO $ writeFile out source
+
+      libVmodelCObj %> \out -> do
+        need [libVmodelCSource, libVmodelCHeader, libVmodel]
+        ToolChain {..} <- askOracle ToolChainQuery
+        incFlags <- askOracle VerilatorFlagsQuery
+        cmd_ cxx incFlags "-c" libVmodelCSource "-o" out
+
+      libVmodelC %> \out -> do
+        need [libVmodelCObj, libVmodel, libverilated]
+        ToolChain {..} <- askOracle ToolChainQuery
+        cmd_ ar "rcs --thin" out libVmodelCObj libVmodel libverilated
+
       -- phony rules when aliases are defined
       forM_ mAlias $ \alias -> do
         let tgt n = alias <> ":" <> n
@@ -300,6 +441,10 @@ rulesFor CompiledBuildConfig {..} = do
         verilatorDir = buildDir </> "verilate" </> modName </> topEntity
         libverilated = verilatorDir </> "libverilated.a"
         libVmodel = verilatorDir </> "libVmodel.a"
+        libVmodelC = verilatorDir </> "libVmodel-c.a"
+        libVmodelCSource = verilatorDir </> "Vmodel-c.cpp"
+        libVmodelCHeader = verilatorDir </> "Vmodel-c.h"
+        libVmodelCObj = verilatorDir </> "libVmodel-c.o"
 
         clashFlagOf :: HDL -> [String]
         clashFlagOf = \case
@@ -321,6 +466,45 @@ rulesFor CompiledBuildConfig {..} = do
 
         makeAbsolute' :: FilePath -> Action FilePath
         makeAbsolute' = liftIO . makeAbsolute
+
+        classifyPorts :: [ManifestPort] -> ([ManifestPort], [ManifestPort], [ManifestPort])
+        classifyPorts ps = (inClockPorts, inNonClockPorts, outPorts)
+          where
+            (inClockPorts, inNonClockPorts) = partition mpIsClock inPorts
+            inPorts = filter (\ManifestPort {..} -> mpDirection == In) ps
+            outPorts = filter (\ManifestPort {..} -> mpDirection == Out) ps
+
+        guessPortRep :: ManifestPort -> Action Rep
+        guessPortRep ManifestPort {..} = do
+          let signed = pack "signed" `T.isInfixOf` mpTypeName
+          width <- guessWidth mpWidth
+          pure Rep {..}
+          where
+            guessWidth w
+              | w <= 8 = pure W8
+              | w <= 16 = pure W16
+              | w <= 32 = pure W32
+              | w <= 64 = pure W64
+              | otherwise = fail $ "unsupported width of port " <> unpack mpName <> ": " <> show w
+
+        -- signess doesn't matter anyways since we're doing FFI
+        cTypeOf :: Rep -> String
+        cTypeOf Rep {..} = case width of
+          W8 -> "uint8_t"
+          W16 -> "uint16_t"
+          W32 -> "uint32_t"
+          W64 -> "uint64_t"
+
+        haskellTypeOf :: Rep -> String
+        haskellTypeOf Rep {..} = case (width, signed) of
+          (W8, False) -> "Word8"
+          (W16, False) -> "Word16"
+          (W32, False) -> "Word32"
+          (W64, False) -> "Word64"
+          (W8, True) -> "Int8"
+          (W16, True) -> "Int16"
+          (W32, True) -> "Int32"
+          (W64, True) -> "Int64"
 
 data StrProp
   = Part
@@ -368,6 +552,26 @@ data ToolChain
   deriving (Show, Eq, Typeable, Generic, Hashable, Binary, NFData)
 
 type instance RuleResult ToolChainQuery = ToolChain
+
+data VerilatorFlagsQuery
+  = VerilatorFlagsQuery
+  deriving (Show, Eq, Typeable, Generic, Hashable, Binary, NFData)
+
+type instance RuleResult VerilatorFlagsQuery = String
+
+data Width
+  = W8
+  | W16
+  | W32
+  | W64
+  deriving (Show, Eq)
+
+data Rep
+  = Rep
+  { width :: Width,
+    signed :: Bool
+  }
+  deriving (Show, Eq)
 
 lookupToolChain :: ToolChainQuery -> Action ToolChain
 lookupToolChain _ = do
