@@ -484,7 +484,7 @@ rulesFor CompiledBuildConfig {..} = do
           instance Storable Input where
             sizeOf _ = \#size Input
             alignment _ = \#alignment Input
-            peek ptr = const Input <$> pure () #{inputPeek}
+            peek ptr = (pure Input) #{inputPeek}
             poke ptr Input{..} = do
               { #{inputPoke} pure ()
               }
@@ -492,7 +492,7 @@ rulesFor CompiledBuildConfig {..} = do
           instance Storable Output where
             sizeOf _ = \#size Output
             alignment _ = \#alignment Output
-            peek ptr = const Output <$> pure () #{outputPeek}
+            peek ptr = (pure Output) #{outputPeek}
             poke ptr Output{..} = do
               { #{outputPoke} pure ()
               }
