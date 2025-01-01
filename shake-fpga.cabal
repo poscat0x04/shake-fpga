@@ -76,7 +76,7 @@ library
 executable shake-fpga
   import:        common-attrs
   main-is:       app/Main.hs
-  ghc-options:   -dynamic
+  ghc-options:   -threaded
   build-depends:
     , base
     , shake-fpga

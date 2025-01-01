@@ -42,7 +42,7 @@ import Data.Aeson.TH (deriveFromJSON)
 import Data.Coerce (coerce)
 import Data.Data (Typeable)
 import Data.Functor ((<&>))
-import Data.List (nub, partition)
+import Data.List (intercalate, nub, partition)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as M
 import Data.Maybe (fromJust)
@@ -418,6 +418,87 @@ rulesFor CompiledBuildConfig {..} = do
         ToolChain {..} <- askOracle ToolChainQuery
         cmd_ ar "rcs --thin" out libVmodelCObj libVmodel libverilated
 
+      hsModule %> \out -> do
+        need [manifestFile, libVmodelCHeader]
+        Just Manifest {..} <- liftIO $ readManifest manifestFile
+
+        let (_, inNonClockPorts, outPorts) = classifyPorts ports
+        inputFields <- fmap (intercalate ",\n") $ forM inNonClockPorts $ \ManifestPort {..} -> do
+          rep <- guessPortRep ManifestPort {..}
+          pure [__i|#{T.toLower mpName} :: #{haskellTypeOf rep}|]
+        let inputPeek =
+              unwords $
+                inNonClockPorts <&> \ManifestPort {..} ->
+                  [__i|<*> (\#peek Input, #{mpName}) ptr|]
+        let inputPoke =
+              unwords $
+                inNonClockPorts <&> \ManifestPort {..} ->
+                  [__i|(\#poke Input, #{mpName}) ptr #{T.toLower mpName};|]
+
+        outputFields <- fmap (intercalate ",\n") $ forM outPorts $ \ManifestPort {..} -> do
+          rep <- guessPortRep ManifestPort {..}
+          pure [__i|#{T.toLower mpName} :: #{haskellTypeOf rep}|]
+        let outputPeek =
+              unwords $
+                outPorts <&> \ManifestPort {..} ->
+                  [__i|<*> (\#peek Output, #{mpName}) ptr|]
+        let outputPoke =
+              unwords $
+                outPorts <&> \ManifestPort {..} ->
+                  [__i|(\#poke Output, #{mpName}) ptr #{T.toLower mpName};|]
+
+        let source =
+              [__i|
+          {-\# LANGUAGE ForeignFunctionInterface \#-}
+          {-\# LANGUAGE RecordWildCards \#-}
+          {-\# LANGUAGE DeriveGeneric \#-}
+          module Verilated where
+
+          import Prelude
+          import GHC.Generics
+          import Data.Word
+          import Data.Int
+          import Foreign.Storable
+          import Foreign.Ptr
+
+          data Input = Input
+            {
+          #{inputFields}
+            }
+            deriving (Show, Eq, Generic)
+
+          data Output = Output
+            {
+          #{outputFields}
+            }
+            deriving (Show, Eq, Generic)
+
+          data SimModel
+
+          foreign import ccall unsafe "startModel" c_startModel :: IO (Ptr SimModel)
+          foreign import ccall unsafe "stopModel" c_stopModel :: Ptr SimModel -> IO ()
+          foreign import ccall unsafe "stepModel" c_stepModel :: Ptr SimModel -> Ptr Input -> Ptr Output -> IO ()
+
+          \#include "Vmodel-c.h"
+
+          instance Storable Input where
+            sizeOf _ = \#size Input
+            alignment _ = \#alignment Input
+            peek ptr = const Input <$> pure () #{inputPeek}
+            poke ptr Input{..} = do
+              { #{inputPoke} pure ()
+              }
+
+          instance Storable Output where
+            sizeOf _ = \#size Output
+            alignment _ = \#alignment Output
+            peek ptr = const Output <$> pure () #{outputPeek}
+            poke ptr Output{..} = do
+              { #{outputPoke} pure ()
+              }
+        |]
+        liftIO $ writeFile out source
+
       -- phony rules when aliases are defined
       forM_ mAlias $ \alias -> do
         let tgt n = alias <> ":" <> n
@@ -505,6 +586,9 @@ rulesFor CompiledBuildConfig {..} = do
           (W16, True) -> "Int16"
           (W32, True) -> "Int32"
           (W64, True) -> "Int64"
+
+        hsDir = buildDir </> "hs" </> modName </> topEntity
+        hsModule = hsDir </> "Verilated.hsc"
 
 data StrProp
   = Part

@@ -5,6 +5,7 @@ documentation: True
 haddock-html: True
 haddock-hoogle: True
 haddock-internal: True
+executable-dynamic: True
 
 package shake-fpga
   ghc-options: -Wall
