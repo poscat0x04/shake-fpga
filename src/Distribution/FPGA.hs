@@ -1,37 +1,83 @@
-module Distribution.FPGA () where
+{-# LANGUAGE OverloadedStrings #-}
 
-import Control.Monad (foldM, forM, when)
-import Data.Coerce (coerce)
-import Data.Functor.Identity
-import Data.Hashable (Hashable)
+module Distribution.FPGA
+  ( injectFPGAHooks,
+    simpleUserHooksWithFPGA,
+    defaultMainWithFPGA,
+  )
+where
+
+import Control.Monad (forM, when)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as M
 import Data.Maybe (isNothing)
+import Development.Shake
+import Development.Shake.FPGA.DirStructure
+  ( BuildOutputLayout (..),
+    DirStructure (..),
+    buildOutputsOf,
+    dirsOf,
+  )
 import Development.Shake.FPGA.Internal
+  ( BuildConfig (..),
+    Target (..),
+    compile,
+    readBuildConfig,
+    rulesFor,
+  )
 import Development.Shake.FPGA.Utils
+  ( Components (..),
+    HasComponentName (..),
+    shakeOpts,
+  )
 import Distribution.Compat.Lens
-import Distribution.Simple
+import Distribution.ModuleName (ModuleName)
+import Distribution.Simple (UserHooks (..), defaultMainWithHooks, simpleUserHooks)
 import Distribution.Simple.LocalBuildInfo (lookupComponent, showComponentName)
-import Distribution.Types.Component (Component (..))
 import Distribution.Types.ComponentName (ComponentName (..))
 import Distribution.Types.Lens
+  ( HasBuildInfo (..),
+    PackageDescription,
+    allLibraries,
+    benchmarks,
+    executables,
+    foreignLibs,
+    testSuites,
+  )
+import Distribution.Utils.Path
+  ( PackageDir,
+    SourceDir,
+    SymbolicPath,
+  )
+import GHC.Generics (Generic)
 
 type Linkage = (ComponentName, Target)
 
 -- | Target is
-type LinkOpt = String
+data LinkOpt = LinkOpt
+  { includePath :: FilePath,
+    objects :: [FilePath],
+    libraries :: [String],
+    libSearchPaths :: [FilePath],
+    hsSourcePath :: SymbolicPath PackageDir SourceDir,
+    hsModules :: [ModuleName]
+  }
+  deriving (Show, Eq, Generic)
 
 type LinkOpts = Map ComponentName LinkOpt
 
-linkagesOf :: CompiledBuildConfig -> [Linkage]
-linkagesOf = _
+linkagesOf :: BuildConfig -> [Linkage]
+linkagesOf BuildConfig {..} =
+  [ (cn, t)
+    | t@Target {..} <- targets,
+      cn <- unComponents targetLinkComponents
+  ]
 
 injectLinkages :: PackageDescription -> [Linkage] -> IO PackageDescription
 injectLinkages pd linkages = do
   alist <- forM linkages $ \(cn, t) -> do
     ensureComponent cn
-    opt <- resolveLinkOpt t
-    pure (cn, opt)
+    pure (cn, resolveLinkOpt t)
   let linkOpts = M.fromList alist
   pure $ injectLinkOpts linkOpts pd
   where
@@ -47,16 +93,17 @@ injectLinkages pd linkages = do
         injectLinkOptTo :: (HasComponentName a, HasBuildInfo a) => a -> a
         injectLinkOptTo a =
           case M.lookup (componentName a) opts of
-            Just opt ->
+            Just LinkOpt {..} ->
               a
                 & buildInfo
                   %~ ( \bi ->
                          bi
-                           & options %~ _
-                           & ldOptions %~ _
-                           & includeDirs %~ _
-                           & extraLibDirs %~ _
-                           & extraLibs %~ (\l -> l <> ["stdc++", "atomic", "z"])
+                           & options %~ fmap (objects <>)
+                           & includeDirs %~ (includePath :)
+                           & extraLibDirs %~ (libSearchPaths <>)
+                           & extraLibs %~ (libraries <>)
+                           & hsSourceDirs %~ (hsSourcePath :)
+                           & otherModules %~ (hsModules <>)
                      )
             Nothing -> a
 
@@ -66,23 +113,50 @@ injectLinkages pd linkages = do
         fail $
           "Unknown component: " <> showComponentName cn
 
-    resolveLinkOpt :: Target -> IO LinkOpt
-    resolveLinkOpt Target {..} = _
+    resolveLinkOpt :: Target -> LinkOpt
+    resolveLinkOpt Target {..} =
+      let DirStructure {..} = dirsOf (targetModule, targetTopEntity)
+          BuildOutputLayout {..} = buildOutputsOf (targetModule, targetTopEntity)
+       in LinkOpt
+            { includePath = verilatorDir,
+              libraries = ["stdc++", "atomic", "z"],
+              libSearchPaths = [],
+              hsSourcePath = read hsDir,
+              hsModules = ["Verilated"],
+              objects = [fullVmodelCO]
+            }
 
-class HasComponentName a where
-  componentName :: a -> ComponentName
+buildThenInject :: PackageDescription -> IO PackageDescription
+buildThenInject pd = do
+  bc <- readBuildConfig "shake-fpga.yaml"
+  let shakeTargets =
+        [ target
+          | Target {..} <- targets bc,
+            not $ null $ unComponents targetLinkComponents,
+            let BuildOutputLayout {..} = buildOutputsOf (targetModule, targetTopEntity),
+            target <- [fullVmodelCO, verilatedHSC]
+        ]
+  shake shakeOpts $
+    rulesFor (compile bc) >> want shakeTargets
+  injectLinkages pd $ linkagesOf bc
 
-instance HasComponentName Executable where
-  componentName = CExeName . view exeName
+injectFPGAHooks :: UserHooks -> UserHooks
+injectFPGAHooks UserHooks {..} =
+  UserHooks
+    { buildHook = newBuildHook,
+      replHook = newReplHook,
+      ..
+    }
+  where
+    newBuildHook pd lbi uh bf = do
+      pd' <- buildThenInject pd
+      buildHook pd' lbi uh bf
+    newReplHook pd lbi uh rf args = do
+      pd' <- buildThenInject pd
+      replHook pd' lbi uh rf args
 
-instance HasComponentName Library where
-  componentName = CLibName . view libName
+simpleUserHooksWithFPGA :: UserHooks
+simpleUserHooksWithFPGA = injectFPGAHooks simpleUserHooks
 
-instance HasComponentName ForeignLib where
-  componentName = CFLibName . view foreignLibName
-
-instance HasComponentName TestSuite where
-  componentName = CTestName . view testName
-
-instance HasComponentName Benchmark where
-  componentName = CBenchName . view benchmarkName
+defaultMainWithFPGA :: IO ()
+defaultMainWithFPGA = defaultMainWithHooks simpleUserHooksWithFPGA

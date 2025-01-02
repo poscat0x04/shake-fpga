@@ -6,6 +6,7 @@ module Development.Shake.FPGA.Internal
 
     -- * Build Configuration
     BuildConfig (..),
+    readBuildConfig,
     CompiledBuildConfig (..),
     compile,
 
@@ -52,7 +53,8 @@ import Data.Text qualified as T
 import Data.Yaml (decodeFileEither)
 import Development.Shake
 import Development.Shake.Classes (Binary, Hashable, NFData)
-import Development.Shake.FPGA.Utils (Components, DBool (..))
+import Development.Shake.FPGA.DirStructure
+import Development.Shake.FPGA.Utils (Components, DBool (..), buildDir, shakeOpts)
 import Development.Shake.FilePath (takeExtension, (<.>), (</>))
 import Development.Shake.Util (parseMakefile)
 import GHC.Generics (Generic)
@@ -142,19 +144,12 @@ rulesFor CompiledBuildConfig {..} = do
       Target {..} <- M.lookup t targetsMap
       targetAlias
   where
-    buildDir = "_build"
-    clashDir = buildDir </> "clash"
-
     clash :: [String] -> Action ()
-    clash args = liftIO $ defaultMain args'
-      where
-        args' = ["-outputdir", clashDir, "-isrc"] <> args
-
-    depMkFile modName = clashDir </> modName <.> "mk"
+    clash = liftIO . defaultMain . (["-isrc"] <>)
 
     rulesForModule :: String -> Rules ()
     rulesForModule modName = do
-      depMkFile modName %> \out -> do
+      depMakefile modName %> \out -> do
         alwaysRerun
         withTempFile $ \temp -> do
           clash ["-M", "-dep-suffix", "", "-dep-makefile", temp, modName]
@@ -162,20 +157,31 @@ rulesFor CompiledBuildConfig {..} = do
 
     rulesForTarget :: TargetRef -> Maybe String -> Rules ()
     rulesForTarget tref@(modName, topEntity) mAlias = do
+      let DirStructure {..} = dirsOf tref
+      let BuildOutputLayout {..} = buildOutputsOf tref
       manifestFile %> \_out -> do
         -- To correctly specify dependencies
-        need [depMkFile modName]
-        mkFile <- liftIO $ readFile $ depMkFile modName
+        need [depMakefile modName]
+        mkFile <- liftIO $ readFile $ depMakefile modName
         let deps = parseMakefile mkFile
         let hsSrcs = [src | (_, srcs) <- deps, src <- srcs, takeExtension src == ".hs"]
         need hsSrcs
 
         _hdl <- askOracle HDLQuery
         -- synthesize using clash
-        clash $
-          clashFlagOf hdl
-            <> ["-fclash-compile-ultra"]
-            <> ["-main-is", topEntity, modName]
+        withTempDir $ \temp -> do
+          clash $
+            clashFlagOf hdl
+              <> ["-outputdir", temp]
+              <> ["-fclash-compile-ultra"]
+              <> ["-main-is", topEntity, modName]
+          liftIO $ removeFiles clashDir ["//*"]
+          let prodDir = temp </> modName <.> topEntity
+          products <- liftIO $ getDirectoryFilesIO prodDir ["//*"]
+          forM_ products $ \file -> do
+            let src = prodDir </> file
+            let dst = clashDir </> file
+            copyFile' src dst
 
       tclScript %> \out -> do
         need [manifestFile]
@@ -185,7 +191,7 @@ rulesFor CompiledBuildConfig {..} = do
         Just Manifest {..} <- liftIO $ readManifest manifestFile
         hdlSrcs <-
           mapM makeAbsolute' $
-            [ targetClashDir </> src
+            [ clashDir </> src
               | (src, _) <- fileNames,
                 takeExtension src == "." <> extOf hdl
             ]
@@ -243,12 +249,12 @@ rulesFor CompiledBuildConfig {..} = do
         |]
         liftIO $ writeFile out file
 
-      bitstreamFile %> \_out -> do
+      bitStreamFile %> \_out -> do
         need [tclScript]
         script <- makeAbsolute' tclScript
         cmd_ (Cwd vivadoDir) "vivado" "-mode" "batch" "-source" script
 
-      libVmodel %> \_out -> do
+      [libVmodelA, libverilatedA] &%> \_out -> do
         need [manifestFile]
         Just Manifest {..} <- liftIO $ readManifest manifestFile
 
@@ -257,26 +263,19 @@ rulesFor CompiledBuildConfig {..} = do
 
         ToolChain {..} <- askOracle ToolChainQuery
         let top = unpack topComponent
-        let makeFlags =
-              unwords
-                [ "CXX=" <> cxx,
-                  "CC=" <> cc,
-                  "OPT_FAST=\"-O3 -march=native\"",
-                  "OPT_SLOW=\"-march=native\"",
-                  "OPT_GLOBAL=\"-march=native\""
-                ]
+
         cmd_
           "verilator --cc --build --prefix Vmodel"
           -- use all threads for compilation
           "-j 0"
           -- generate FST waveform
           "--trace-fst --trace-structs"
-          -- optimization flags
+          -- optimization flags for verilator codegen
           -- see: https://verilator.org/guide/latest/simulating.html#benchmarking-optimization
-          -- verilator codegen
           "-O3 --x-assign fast --x-initial fast --noassert"
           -- c++ compiler flags
-          ["--MAKEFLAGS", makeFlags]
+          ["--MAKEFLAGS", [__i|CXX=#{cxx} CC=#{cc} OPT_FAST="-O3"|]]
+          "--CFLAGS -fPIC"
           -- clash currently generates verilog 2001 and systemverilog 2012
           -- see: https://clash-lang.readthedocs.io/en/latest/developing-hardware/flags.html
           "+1364-2001ext+v"
@@ -284,15 +283,12 @@ rulesFor CompiledBuildConfig {..} = do
           "-Mdir"
           verilatorDir
           "-y"
-          targetClashDir
+          clashDir
           "--top-module"
           top
           top
 
-      libverilated %> \_out -> do
-        need [libVmodel]
-
-      libVmodelCHeader %> \out -> do
+      vmodelCH %> \out -> do
         need [manifestFile]
         Just Manifest {..} <- liftIO $ readManifest manifestFile
 
@@ -352,7 +348,7 @@ rulesFor CompiledBuildConfig {..} = do
         |]
         liftIO $ writeFile out source
 
-      libVmodelCSource %> \out -> do
+      vmodelCCPP %> \out -> do
         need [manifestFile]
         Just Manifest {..} <- liftIO $ readManifest manifestFile
 
@@ -409,19 +405,33 @@ rulesFor CompiledBuildConfig {..} = do
         |]
         liftIO $ writeFile out source
 
-      libVmodelCObj %> \out -> do
-        need [libVmodelCSource, libVmodelCHeader, libVmodel]
+      vmodelCO %> \out -> do
+        need [vmodelCCPP, vmodelCH, libVmodelA]
         ToolChain {..} <- askOracle ToolChainQuery
         incFlags <- askOracle VerilatorFlagsQuery
-        cmd_ cxx incFlags "-c" libVmodelCSource "-o" out
+        cmd_ cxx incFlags "-c" vmodelCCPP "-o" out
 
-      libVmodelC %> \out -> do
-        need [libVmodelCObj, libVmodel, libverilated]
+      libVmodelCA %> \out -> do
+        need [vmodelCO, libVmodelA, libverilatedA]
         ToolChain {..} <- askOracle ToolChainQuery
-        cmd_ ar "rcs --thin" out libVmodelCObj libVmodel libverilated
+        let mirScript =
+              [__i|
+          create #{out}
+          addlib #{libVmodelA}
+          addlib #{libverilatedA}
+          addmod #{vmodelCO}
+          save
+          end
+        |]
+        cmd_ "ar -M" (StdinBS mirScript)
 
-      hsModule %> \out -> do
-        need [manifestFile, libVmodelCHeader]
+      fullVmodelCO %> \out -> do
+        need [libVmodelCA]
+        ToolChain {..} <- askOracle ToolChainQuery
+        cmd_ ld "-r -o" out "--whole-archive" libVmodelCA
+
+      verilatedHSC %> \out -> do
+        need [manifestFile, vmodelCH]
         Just Manifest {..} <- liftIO $ readManifest manifestFile
 
         let (_, inNonClockPorts, outPorts) = classifyPorts ports
@@ -507,28 +517,12 @@ rulesFor CompiledBuildConfig {..} = do
         let bitT = tgt "bit"
         let verilateT = tgt "verilate"
         let clashT = tgt "clash"
-        phony bitT $ need [bitstreamFile]
-        phony verilateT $ need [libVmodel]
+        phony bitT $ need [bitStreamFile]
+        phony verilateT $ need [libVmodelA]
         phony clashT $ need [manifestFile]
         phony alias $
           need [bitT, verilateT, clashT]
       where
-        targetClashDir = clashDir </> modName <.> topEntity
-        manifestFile = targetClashDir </> "clash-manifest.json"
-
-        tclScript = buildDir </> modName <.> topEntity <.> "tcl"
-
-        vivadoDir = buildDir </> "vivado" </> modName </> topEntity
-        bitstreamFile = vivadoDir </> "out.bit"
-
-        verilatorDir = buildDir </> "verilate" </> modName </> topEntity
-        libverilated = verilatorDir </> "libverilated.a"
-        libVmodel = verilatorDir </> "libVmodel.a"
-        libVmodelC = verilatorDir </> "libVmodel-c.a"
-        libVmodelCSource = verilatorDir </> "Vmodel-c.cpp"
-        libVmodelCHeader = verilatorDir </> "Vmodel-c.h"
-        libVmodelCObj = verilatorDir </> "libVmodel-c.o"
-
         clashFlagOf :: HDL -> [String]
         clashFlagOf = \case
           Verilog -> ["--verilog"]
@@ -589,9 +583,6 @@ rulesFor CompiledBuildConfig {..} = do
           (W32, True) -> "Int32"
           (W64, True) -> "Int64"
 
-        hsDir = buildDir </> "hs" </> modName </> topEntity
-        hsModule = hsDir </> "Verilated.hsc"
-
 data StrProp
   = Part
   | XDC
@@ -632,8 +623,7 @@ data ToolChain
   = ToolChain
   { cc :: FilePath,
     cxx :: FilePath,
-    ld :: FilePath,
-    ar :: FilePath
+    ld :: FilePath
   }
   deriving (Show, Eq, Typeable, Generic, Hashable, Binary, NFData)
 
@@ -661,14 +651,14 @@ data Rep
 
 lookupToolChain :: ToolChainQuery -> Action ToolChain
 lookupToolChain _ = do
+  mbLld <- findExecutable' "ld.lld"
+  mbGold <- findExecutable' "ld.gold"
   mbLd <- findExecutable' "ld"
-  mbAr <- findExecutable' "ar"
   mbClang <- findExecutable' "clang"
   mbCc <- findExecutable' "cc"
   mbClangxx <- findExecutable' "clang++"
   mbCxx <- findExecutable' "c++"
-  ld <- mbLd `abort` "ld not found"
-  ar <- mbAr `abort` "ar not found"
+  ld <- (mbLld <|> mbGold <|> mbLd) `abort` "ld not found"
   cc <- (mbClang <|> mbCc) `abort` "cc not found"
   cxx <- (mbClangxx <|> mbCxx) `abort` "c++ not found"
   pure ToolChain {..}
@@ -709,26 +699,22 @@ $( deriveFromJSON
      ''BuildConfig
  )
 
+readBuildConfig :: FilePath -> IO BuildConfig
+readBuildConfig file = do
+  e <- decodeFileEither file
+  case e of
+    Left err -> fail $ "Failed to parse config file: " <> show err
+    Right c -> pure c
+
 rulesFromFile :: FilePath -> Rules ()
 rulesFromFile file = do
-  config <- liftIO $ do
-    e <- decodeFileEither file
-    case e of
-      Left err -> fail $ "Failed to parse config file: " <> show err
-      Right c -> pure c
+  config <- liftIO $ readBuildConfig file
   rulesFor $ compile config
 
 shakeFromFile :: FilePath -> IO ()
-shakeFromFile file = shakeArgs
-  shakeOptions
-    { shakeFiles = buildDir,
-      shakeThreads = 0
-    }
-  $ do
-    phony "clean" $ do
-      putNormal $ "Cleaning files in " <> buildDir
-      removeFilesAfter buildDir ["//*"]
+shakeFromFile file = shakeArgs shakeOpts $ do
+  phony "clean" $ do
+    putNormal $ "Cleaning files in " <> buildDir
+    removeFilesAfter buildDir ["//*"]
 
-    rulesFromFile file
-  where
-    buildDir = "_build"
+  rulesFromFile file

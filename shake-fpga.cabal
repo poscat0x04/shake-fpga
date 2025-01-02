@@ -68,6 +68,7 @@ library
 
   exposed-modules:
     Development.Shake.FPGA
+    Development.Shake.FPGA.DirStructure
     Development.Shake.FPGA.Internal
     Distribution.FPGA
 

@@ -1,6 +1,9 @@
 module Development.Shake.FPGA.Utils
   ( DBool (..),
     Components (..),
+    HasComponentName (..),
+    buildDir,
+    shakeOpts,
   )
 where
 
@@ -9,8 +12,11 @@ import Data.Aeson (FromJSON (..))
 import Data.Coerce (coerce)
 import Data.Data (Proxy (..))
 import Data.String.Interpolate (__i)
-import Distribution.PackageDescription (ComponentName)
+import Development.Shake
+import Distribution.Compat.Lens (view)
+import Distribution.PackageDescription (ComponentName (..))
 import Distribution.Parsec (eitherParsec)
+import Distribution.Types.Lens
 import GHC.Generics (Generic)
 
 class KnownBool (k :: Bool) where
@@ -47,3 +53,27 @@ instance FromJSON Components where
         pure
         $ eitherParsec s
     pure $ Components cs
+
+class HasComponentName a where
+  componentName :: a -> ComponentName
+
+instance HasComponentName Executable where
+  componentName = CExeName . view exeName
+
+instance HasComponentName Library where
+  componentName = CLibName . view libName
+
+instance HasComponentName ForeignLib where
+  componentName = CFLibName . view foreignLibName
+
+instance HasComponentName TestSuite where
+  componentName = CTestName . view testName
+
+instance HasComponentName Benchmark where
+  componentName = CBenchName . view benchmarkName
+
+buildDir :: String
+buildDir = "_build"
+
+shakeOpts :: ShakeOptions
+shakeOpts = shakeOptions {shakeFiles = buildDir, shakeThreads = 0}
