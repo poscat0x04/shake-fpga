@@ -52,7 +52,7 @@ import Data.Text qualified as T
 import Data.Yaml (decodeFileEither)
 import Development.Shake
 import Development.Shake.Classes (Binary, Hashable, NFData)
-import Development.Shake.FPGA.Utils (DBool (..))
+import Development.Shake.FPGA.Utils (Components, DBool (..))
 import Development.Shake.FilePath (takeExtension, (<.>), (</>))
 import Development.Shake.Util (parseMakefile)
 import GHC.Generics (Generic)
@@ -78,7 +78,9 @@ data Target
     targetXDC :: String,
     -- | Alias for the target, will be used to generate phony rules if set
     targetAlias :: Maybe String,
-    targetGUI :: DBool 'False
+    -- | Whether to start the Vivado GUI when synthesizing
+    targetGUI :: DBool 'False,
+    targetLinkComponents :: Components
   }
   deriving (Eq, Show, Generic)
 
@@ -694,6 +696,7 @@ $( deriveFromJSON
            "targetXDC" -> "xdc"
            "targetAlias" -> "alias"
            "targetGUI" -> "gui"
+           "targetLinkComponents" -> "linkComponents"
            x -> x
        }
      ''Target

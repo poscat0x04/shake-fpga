@@ -52,6 +52,8 @@ library
   build-depends:
     , aeson
     , base
+    , Cabal
+    , Cabal-syntax
     , clash-ghc
     , clash-lib
     , containers
@@ -67,8 +69,7 @@ library
   exposed-modules:
     Development.Shake.FPGA
     Development.Shake.FPGA.Internal
-    Development.Shake.Verilate
-    Development.Shake.Verilate.Cabal
+    Distribution.FPGA
 
   other-modules:   Development.Shake.FPGA.Utils
   hs-source-dirs:  src
