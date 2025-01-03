@@ -33,8 +33,9 @@ import Development.Shake.FPGA.Utils
 import Distribution.Compat.Lens
 import Distribution.ModuleName (ModuleName)
 import Distribution.Simple (UserHooks (..), defaultMainWithHooks, simpleUserHooks)
-import Distribution.Simple.LocalBuildInfo (lookupComponent, showComponentName)
+import Distribution.Simple.LocalBuildInfo (LocalBuildInfo (localPkgDescr), lookupComponent, showComponentName)
 import Distribution.Types.ComponentName (ComponentName (..))
+import Distribution.Types.GenericPackageDescription.Lens
 import Distribution.Types.Lens
   ( HasBuildInfo (..),
     PackageDescription,
@@ -48,6 +49,7 @@ import Distribution.Utils.Path
   ( PackageDir,
     SourceDir,
     SymbolicPath,
+    unsafeMakeSymbolicPath,
   )
 import GHC.Generics (Generic)
 
@@ -98,14 +100,14 @@ injectLinkages pd linkages = do
                 & buildInfo
                   %~ ( \bi ->
                          bi
-                           & options %~ fmap (objects <>)
+                           & options %~ fmap (\flag -> objects <> libFlags libraries <> flag)
                            & includeDirs %~ (includePath :)
-                           & extraLibDirs %~ (libSearchPaths <>)
-                           & extraLibs %~ (libraries <>)
                            & hsSourceDirs %~ (hsSourcePath :)
                            & otherModules %~ (hsModules <>)
                      )
             Nothing -> a
+
+        libFlags = fmap ("-l" <>)
 
     ensureComponent :: ComponentName -> IO ()
     ensureComponent cn =
@@ -121,7 +123,7 @@ injectLinkages pd linkages = do
             { includePath = verilatorDir,
               libraries = ["stdc++", "atomic", "z"],
               libSearchPaths = [],
-              hsSourcePath = read hsDir,
+              hsSourcePath = unsafeMakeSymbolicPath hsDir,
               hsModules = ["Verilated"],
               objects = [fullVmodelCO]
             }
@@ -141,19 +143,22 @@ buildThenInject pd = do
   injectLinkages pd $ linkagesOf bc
 
 injectFPGAHooks :: UserHooks -> UserHooks
-injectFPGAHooks UserHooks {..} =
-  UserHooks
-    { buildHook = newBuildHook,
-      replHook = newReplHook,
-      ..
-    }
+injectFPGAHooks UserHooks {..} = uh'
   where
+    uh' =
+      UserHooks
+        { buildHook = newBuildHook,
+          replHook = newReplHook,
+          ..
+        }
     newBuildHook pd lbi uh bf = do
       pd' <- buildThenInject pd
-      buildHook pd' lbi uh bf
+      let lbi' = lbi {localPkgDescr = pd'}
+      buildHook pd' lbi' uh bf
     newReplHook pd lbi uh rf args = do
       pd' <- buildThenInject pd
-      replHook pd' lbi uh rf args
+      let lbi' = lbi {localPkgDescr = pd'}
+      replHook pd' lbi' uh rf args
 
 simpleUserHooksWithFPGA :: UserHooks
 simpleUserHooksWithFPGA = injectFPGAHooks simpleUserHooks

@@ -177,11 +177,7 @@ rulesFor CompiledBuildConfig {..} = do
               <> ["-main-is", topEntity, modName]
           liftIO $ removeFiles clashDir ["//*"]
           let prodDir = temp </> modName <.> topEntity
-          products <- liftIO $ getDirectoryFilesIO prodDir ["//*"]
-          forM_ products $ \file -> do
-            let src = prodDir </> file
-            let dst = clashDir </> file
-            copyFile' src dst
+          cmd_ "mv" prodDir clashDir
 
       tclScript %> \out -> do
         need [manifestFile]
