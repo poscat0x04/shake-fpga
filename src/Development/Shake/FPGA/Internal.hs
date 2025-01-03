@@ -26,6 +26,7 @@ module Development.Shake.FPGA.Internal
 
     -- * Utilities
     lookupToolChain,
+    buildAllLinkedTargets,
   )
 where
 
@@ -54,7 +55,7 @@ import Data.Yaml (decodeFileEither)
 import Development.Shake
 import Development.Shake.Classes (Binary, Hashable, NFData)
 import Development.Shake.FPGA.DirStructure
-import Development.Shake.FPGA.Utils (Components, DBool (..), buildDir, shakeOpts)
+import Development.Shake.FPGA.Utils (Components (..), DBool (..), buildDir, shakeOpts)
 import Development.Shake.FilePath (takeExtension, (<.>), (</>))
 import Development.Shake.Util (parseMakefile)
 import GHC.Generics (Generic)
@@ -714,3 +715,17 @@ shakeFromFile file = shakeArgs shakeOpts $ do
     removeFilesAfter buildDir ["//*"]
 
   rulesFromFile file
+
+buildAllLinkedTargets :: IO BuildConfig
+buildAllLinkedTargets = do
+  bc@BuildConfig {..} <- readBuildConfig "shake-fpga.yaml"
+  let shakeTargets =
+        [ target
+          | Target {..} <- targets,
+            not $ null $ unComponents targetLinkComponents,
+            let BuildOutputLayout {..} = buildOutputsOf (targetModule, targetTopEntity),
+            target <- [fullVmodelCO, verilatedHSC]
+        ]
+  shake shakeOpts $
+    rulesFor (compile bc) >> want shakeTargets
+  pure bc

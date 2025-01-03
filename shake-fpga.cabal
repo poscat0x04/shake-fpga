@@ -72,6 +72,7 @@ library
     Development.Shake.FPGA.DirStructure
     Development.Shake.FPGA.Internal
     Distribution.FPGA
+    Distribution.FPGA.Hooks
 
   other-modules:   Development.Shake.FPGA.Utils
   hs-source-dirs:  src

@@ -4,6 +4,11 @@ module Distribution.FPGA
   ( injectFPGAHooks,
     simpleUserHooksWithFPGA,
     defaultMainWithFPGA,
+    LinkOpt (..),
+    LinkOpts,
+    linkOptsOf,
+    injectLinkOpt,
+    injectLinkOpts,
   )
 where
 
@@ -11,7 +16,7 @@ import Control.Monad (forM, when)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as M
 import Data.Maybe (isNothing)
-import Development.Shake
+import Development.Shake (shake, want)
 import Development.Shake.FPGA.DirStructure
   ( BuildOutputLayout (..),
     DirStructure (..),
@@ -21,6 +26,7 @@ import Development.Shake.FPGA.DirStructure
 import Development.Shake.FPGA.Internal
   ( BuildConfig (..),
     Target (..),
+    buildAllLinkedTargets,
     compile,
     readBuildConfig,
     rulesFor,
@@ -30,7 +36,8 @@ import Development.Shake.FPGA.Utils
     HasComponentName (..),
     shakeOpts,
   )
-import Distribution.Compat.Lens
+import Distribution.Compat.Directory (makeAbsolute)
+import Distribution.Compat.Lens ((%~), (&))
 import Distribution.ModuleName (ModuleName)
 import Distribution.Simple (UserHooks (..), defaultMainWithHooks, simpleUserHooks)
 import Distribution.Simple.LocalBuildInfo (LocalBuildInfo (localPkgDescr), lookupComponent, showComponentName)
@@ -69,79 +76,67 @@ data LinkOpt = LinkOpt
 
 type LinkOpts = Map ComponentName LinkOpt
 
-linkagesOf :: BuildConfig -> [Linkage]
-linkagesOf BuildConfig {..} =
-  [ (cn, t)
-    | t@Target {..} <- targets,
-      cn <- unComponents targetLinkComponents
-  ]
+linkOptsOf :: BuildConfig -> IO LinkOpts
+linkOptsOf BuildConfig {..} = do
+  alists <-
+    sequenceA
+      [ fmap (cn,) io
+        | t@Target {..} <- targets,
+          let io = linkOptOf t,
+          cn <- unComponents targetLinkComponents
+      ]
+  pure $ M.fromList alists
 
-injectLinkages :: PackageDescription -> [Linkage] -> IO PackageDescription
-injectLinkages pd linkages = do
-  alist <- forM linkages $ \(cn, t) -> do
-    ensureComponent cn
-    pure (cn, resolveLinkOpt t)
-  let linkOpts = M.fromList alist
-  pure $ injectLinkOpts linkOpts pd
+linkOptOf :: Target -> IO LinkOpt
+linkOptOf Target {..} = do
+  let DirStructure {..} = dirsOf (targetModule, targetTopEntity)
+      BuildOutputLayout {..} = buildOutputsOf (targetModule, targetTopEntity)
+  fullVmodelCOAbs <- makeAbsolute fullVmodelCO
+  pure
+    LinkOpt
+      { includePath = unsafeMakeSymbolicPath verilatorDir,
+        libraries = ["stdc++", "atomic", "z"],
+        libSearchPaths = [],
+        hsSourcePath = unsafeMakeSymbolicPath hsDir,
+        hsModules = ["Verilated"],
+        objects = [fullVmodelCOAbs]
+      }
+
+injectLinkOptsToPD :: LinkOpts -> PackageDescription -> PackageDescription
+injectLinkOptsToPD opts pd' =
+  pd'
+    & executables . traverse %~ injectLinkOpts' opts
+    & allLibraries %~ injectLinkOpts' opts
+    & foreignLibs . traverse %~ injectLinkOpts' opts
+    & testSuites . traverse %~ injectLinkOpts' opts
+    & benchmarks . traverse %~ injectLinkOpts' opts
   where
-    injectLinkOpts :: LinkOpts -> PackageDescription -> PackageDescription
-    injectLinkOpts opts pd' =
-      pd'
-        & executables . traverse %~ injectLinkOptTo
-        & allLibraries %~ injectLinkOptTo
-        & foreignLibs . traverse %~ injectLinkOptTo
-        & testSuites . traverse %~ injectLinkOptTo
-        & benchmarks . traverse %~ injectLinkOptTo
-      where
-        injectLinkOptTo :: (HasComponentName a, HasBuildInfo a) => a -> a
-        injectLinkOptTo a =
-          case M.lookup (componentName a) opts of
-            Just LinkOpt {..} ->
-              a
-                & buildInfo
-                  %~ ( \bi ->
-                         bi
-                           & options %~ fmap (\flag -> objects <> libFlags libraries <> flag)
-                           & includeDirs %~ (includePath :)
-                           & hsSourceDirs %~ (hsSourcePath :)
-                           & otherModules %~ (hsModules <>)
-                     )
-            Nothing -> a
+    injectLinkOpts' opts a = injectLinkOpts opts (componentName a) a
 
-        libFlags = fmap ("-l" <>)
+injectLinkOpts :: (HasBuildInfo a) => LinkOpts -> ComponentName -> a -> a
+injectLinkOpts opts cn a =
+  case M.lookup cn opts of
+    Just opt -> injectLinkOpt opt a
+    Nothing -> a
 
-    ensureComponent :: ComponentName -> IO ()
-    ensureComponent cn =
-      when (isNothing (lookupComponent pd cn)) $
-        fail $
-          "Unknown component: " <> showComponentName cn
-
-    resolveLinkOpt :: Target -> LinkOpt
-    resolveLinkOpt Target {..} =
-      let DirStructure {..} = dirsOf (targetModule, targetTopEntity)
-          BuildOutputLayout {..} = buildOutputsOf (targetModule, targetTopEntity)
-       in LinkOpt
-            { includePath = unsafeMakeSymbolicPath verilatorDir,
-              libraries = ["stdc++", "atomic", "z"],
-              libSearchPaths = [],
-              hsSourcePath = unsafeMakeSymbolicPath hsDir,
-              hsModules = ["Verilated"],
-              objects = [fullVmodelCO]
-            }
+injectLinkOpt :: (HasBuildInfo a) => LinkOpt -> a -> a
+injectLinkOpt LinkOpt {..} a =
+  a
+    & buildInfo . options %~ fmap (objects <>)
+    & buildInfo . includeDirs %~ (includePath :)
+    & buildInfo . extraLibs %~ (libraries <>)
+    & buildInfo . hsSourceDirs %~ (hsSourcePath :)
+    & buildInfo . otherModules %~ (hsModules <>)
+    & buildInfo . options %~ fmap (libFlags libraries <>)
+  where
+    libFlags :: (Functor f) => f String -> f String
+    libFlags = fmap ("-l" <>)
 
 buildThenInject :: PackageDescription -> IO PackageDescription
 buildThenInject pd = do
-  bc <- readBuildConfig "shake-fpga.yaml"
-  let shakeTargets =
-        [ target
-          | Target {..} <- targets bc,
-            not $ null $ unComponents targetLinkComponents,
-            let BuildOutputLayout {..} = buildOutputsOf (targetModule, targetTopEntity),
-            target <- [fullVmodelCO, verilatedHSC]
-        ]
-  shake shakeOpts $
-    rulesFor (compile bc) >> want shakeTargets
-  injectLinkages pd $ linkagesOf bc
+  bc <- buildAllLinkedTargets
+  opts <- linkOptsOf bc
+  pure $ injectLinkOptsToPD opts pd
 
 injectFPGAHooks :: UserHooks -> UserHooks
 injectFPGAHooks UserHooks {..} = uh'
