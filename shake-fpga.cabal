@@ -53,6 +53,7 @@ library
     , aeson
     , base
     , Cabal
+    , Cabal-hooks
     , Cabal-syntax
     , clash-ghc
     , clash-lib

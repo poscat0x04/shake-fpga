@@ -35,7 +35,6 @@ import Distribution.ModuleName (ModuleName)
 import Distribution.Simple (UserHooks (..), defaultMainWithHooks, simpleUserHooks)
 import Distribution.Simple.LocalBuildInfo (LocalBuildInfo (localPkgDescr), lookupComponent, showComponentName)
 import Distribution.Types.ComponentName (ComponentName (..))
-import Distribution.Types.GenericPackageDescription.Lens
 import Distribution.Types.Lens
   ( HasBuildInfo (..),
     PackageDescription,
@@ -46,8 +45,10 @@ import Distribution.Types.Lens
     testSuites,
   )
 import Distribution.Utils.Path
-  ( PackageDir,
-    SourceDir,
+  ( FileOrDir (..),
+    Include,
+    Pkg,
+    Source,
     SymbolicPath,
     unsafeMakeSymbolicPath,
   )
@@ -57,11 +58,11 @@ type Linkage = (ComponentName, Target)
 
 -- | Target is
 data LinkOpt = LinkOpt
-  { includePath :: FilePath,
+  { includePath :: SymbolicPath Pkg (Dir Include),
     objects :: [FilePath],
     libraries :: [String],
     libSearchPaths :: [FilePath],
-    hsSourcePath :: SymbolicPath PackageDir SourceDir,
+    hsSourcePath :: SymbolicPath Pkg (Dir Source),
     hsModules :: [ModuleName]
   }
   deriving (Show, Eq, Generic)
@@ -120,7 +121,7 @@ injectLinkages pd linkages = do
       let DirStructure {..} = dirsOf (targetModule, targetTopEntity)
           BuildOutputLayout {..} = buildOutputsOf (targetModule, targetTopEntity)
        in LinkOpt
-            { includePath = verilatorDir,
+            { includePath = unsafeMakeSymbolicPath verilatorDir,
               libraries = ["stdc++", "atomic", "z"],
               libSearchPaths = [],
               hsSourcePath = unsafeMakeSymbolicPath hsDir,
