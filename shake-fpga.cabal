@@ -21,7 +21,6 @@ common common-attrs
   build-depends:      base >=4.10 && <5
   default-language:   GHC2021
   default-extensions:
-    NoStarIsType
     ApplicativeDo
     ConstraintKinds
     DataKinds
@@ -34,6 +33,7 @@ common common-attrs
     LambdaCase
     MultiWayIf
     NamedFieldPuns
+    NoStarIsType
     PartialTypeSignatures
     PatternSynonyms
     QuantifiedConstraints
@@ -53,7 +53,7 @@ library
     , aeson
     , base
     , Cabal
-    , Cabal-hooks
+    , Cabal-hooks           ^>=3.16
     , Cabal-syntax
     , clash-ghc
     , clash-lib
