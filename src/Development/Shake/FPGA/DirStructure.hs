@@ -21,7 +21,7 @@ data DirStructure = DirStructure
 
 data BuildOutputLayout = BuildOutputLayout
   { manifestFile :: FilePath,
-    tclScript :: FilePath,
+    tclBuildScript :: FilePath,
     bitStreamFile :: FilePath,
     libverilatedA :: FilePath,
     libVmodelA :: FilePath,
@@ -57,7 +57,7 @@ buildOutputsOf t = BuildOutputLayout {..}
   where
     DirStructure {..} = dirsOf t
     manifestFile = clashDir </> "clash-manifest.json"
-    tclScript = vivadoDir </> "synth+implement.tcl"
+    tclBuildScript = vivadoDir </> "synth+implement.tcl"
     bitStreamFile = vivadoDir </> "out.bit"
 
     vmodelH = verilatorDir </> "Vmodel.h"

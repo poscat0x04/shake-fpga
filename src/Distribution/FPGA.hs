@@ -12,11 +12,8 @@ module Distribution.FPGA
   )
 where
 
-import Control.Monad (forM, when)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as M
-import Data.Maybe (isNothing)
-import Development.Shake (shake, want)
 import Development.Shake.FPGA.DirStructure
   ( BuildOutputLayout (..),
     DirStructure (..),
@@ -27,20 +24,16 @@ import Development.Shake.FPGA.Internal
   ( BuildConfig (..),
     Target (..),
     buildAllLinkedTargets,
-    compile,
-    readBuildConfig,
-    rulesFor,
   )
 import Development.Shake.FPGA.Utils
   ( Components (..),
     HasComponentName (..),
-    shakeOpts,
   )
 import Distribution.Compat.Directory (makeAbsolute)
 import Distribution.Compat.Lens ((%~), (&))
 import Distribution.ModuleName (ModuleName)
 import Distribution.Simple (UserHooks (..), defaultMainWithHooks, simpleUserHooks)
-import Distribution.Simple.LocalBuildInfo (LocalBuildInfo (localPkgDescr), lookupComponent, showComponentName)
+import Distribution.Simple.LocalBuildInfo (LocalBuildInfo (localPkgDescr))
 import Distribution.Types.ComponentName (ComponentName (..))
 import Distribution.Types.Lens
   ( HasBuildInfo (..),
@@ -81,9 +74,9 @@ linkOptsOf BuildConfig {..} = do
   alists <-
     sequenceA
       [ fmap (cn,) io
-        | t@Target {..} <- targets,
-          let io = linkOptOf t,
-          cn <- unComponents targetLinkComponents
+      | t@Target {..} <- targets,
+        let io = linkOptOf t,
+        cn <- unComponents targetLinkComponents
       ]
   pure $ M.fromList alists
 
@@ -111,7 +104,7 @@ injectLinkOptsToPD opts pd' =
     & testSuites . traverse %~ injectLinkOpts' opts
     & benchmarks . traverse %~ injectLinkOpts' opts
   where
-    injectLinkOpts' opts a = injectLinkOpts opts (componentName a) a
+    injectLinkOpts' opts' a = injectLinkOpts opts' (componentName a) a
 
 injectLinkOpts :: (HasBuildInfo a) => LinkOpts -> ComponentName -> a -> a
 injectLinkOpts opts cn a =

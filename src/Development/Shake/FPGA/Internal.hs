@@ -42,7 +42,6 @@ import Data.Aeson
   )
 import Data.Aeson.TH (deriveFromJSON)
 import Data.Coerce (coerce)
-import Data.Data (Typeable)
 import Data.Functor ((<&>))
 import Data.List (intercalate, nub, partition)
 import Data.Map.Strict (Map)
@@ -180,7 +179,7 @@ rulesFor CompiledBuildConfig {..} = do
           let prodDir = temp </> modName <.> topEntity
           cmd_ "mv" prodDir clashDir
 
-      tclScript %> \out -> do
+      tclBuildScript %> \out -> do
         need [manifestFile]
 
         -- Determine the HDL sources from clash-manifest.json
@@ -189,8 +188,8 @@ rulesFor CompiledBuildConfig {..} = do
         hdlSrcs <-
           mapM makeAbsolute' $
             [ clashDir </> src
-              | (src, _) <- fileNames,
-                takeExtension src == "." <> extOf hdl
+            | (src, _) <- fileNames,
+              takeExtension src == "." <> extOf hdl
             ]
 
         part <- askOracle $ StrPropQuery Part tref
@@ -247,8 +246,8 @@ rulesFor CompiledBuildConfig {..} = do
         liftIO $ writeFile out file
 
       bitStreamFile %> \_out -> do
-        need [tclScript]
-        script <- makeAbsolute' tclScript
+        need [tclBuildScript]
+        script <- makeAbsolute' tclBuildScript
         cmd_ (Cwd vivadoDir) "vivado" "-mode" "batch" "-source" script
 
       [libVmodelA, libverilatedA] &%> \_out -> do
@@ -583,38 +582,38 @@ rulesFor CompiledBuildConfig {..} = do
 data StrProp
   = Part
   | XDC
-  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+  deriving (Eq, Show, Generic, Hashable, Binary, NFData)
 
 data StrPropQuery
   = StrPropQuery
   { prop :: StrProp,
     target :: TargetRef
   }
-  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+  deriving (Eq, Show, Generic, Hashable, Binary, NFData)
 
 type instance RuleResult StrPropQuery = String
 
 data BoolProp
   = GUI
-  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+  deriving (Eq, Show, Generic, Hashable, Binary, NFData)
 
 data BoolPropQuery
   = BoolPropQuery
   { prop :: BoolProp,
     target :: TargetRef
   }
-  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+  deriving (Eq, Show, Generic, Hashable, Binary, NFData)
 
 type instance RuleResult BoolPropQuery = Bool
 
 data HDLQuery = HDLQuery
-  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+  deriving (Eq, Show, Generic, Hashable, Binary, NFData)
 
 type instance RuleResult HDLQuery = HDL
 
 data ToolChainQuery
   = ToolChainQuery
-  deriving (Eq, Show, Typeable, Generic, Hashable, Binary, NFData)
+  deriving (Eq, Show, Generic, Hashable, Binary, NFData)
 
 data ToolChain
   = ToolChain
@@ -622,13 +621,13 @@ data ToolChain
     cxx :: FilePath,
     ld :: FilePath
   }
-  deriving (Show, Eq, Typeable, Generic, Hashable, Binary, NFData)
+  deriving (Show, Eq, Generic, Hashable, Binary, NFData)
 
 type instance RuleResult ToolChainQuery = ToolChain
 
 data VerilatorFlagsQuery
   = VerilatorFlagsQuery
-  deriving (Show, Eq, Typeable, Generic, Hashable, Binary, NFData)
+  deriving (Show, Eq, Generic, Hashable, Binary, NFData)
 
 type instance RuleResult VerilatorFlagsQuery = String
 
@@ -721,10 +720,10 @@ buildAllLinkedTargets = do
   bc@BuildConfig {..} <- readBuildConfig "shake-fpga.yaml"
   let shakeTargets =
         [ target
-          | Target {..} <- targets,
-            not $ null $ unComponents targetLinkComponents,
-            let BuildOutputLayout {..} = buildOutputsOf (targetModule, targetTopEntity),
-            target <- [fullVmodelCO, verilatedHSC]
+        | Target {..} <- targets,
+          not $ null $ unComponents targetLinkComponents,
+          let BuildOutputLayout {..} = buildOutputsOf (targetModule, targetTopEntity),
+          target <- [fullVmodelCO, verilatedHSC]
         ]
   shake shakeOpts $
     rulesFor (compile bc) >> want shakeTargets
