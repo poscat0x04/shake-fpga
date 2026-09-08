@@ -88,7 +88,7 @@ linkOptOf Target {..} = do
   pure
     LinkOpt
       { includePath = unsafeMakeSymbolicPath verilatorDir,
-        libraries = ["stdc++", "atomic", "z"],
+        libraries = ["stdc++", "atomic", "z", "lz4"],
         libSearchPaths = [],
         hsSourcePath = unsafeMakeSymbolicPath hsDir,
         hsModules = ["Verilated"],
