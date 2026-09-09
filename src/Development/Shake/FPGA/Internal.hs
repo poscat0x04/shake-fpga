@@ -273,7 +273,7 @@ rulesFor CompiledBuildConfig {..} = do
           ["--MAKEFLAGS", [__i|CXX=#{cxx} CC=#{cc} OPT_FAST="-O3"|]]
           "--CFLAGS -fPIC"
           -- clash currently generates verilog 2001 and systemverilog 2012
-          -- see: https://clash-lang.readthedocs.io/en/latest/developing-hardware/flags.html
+          -- see: https://docs.clash-lang.org/compiler-user-guide/developing-hardware/flags.html
           "+1364-2001ext+v"
           "+1800-2012ext+sv"
           "-Mdir"
@@ -405,7 +405,7 @@ rulesFor CompiledBuildConfig {..} = do
         need [vmodelCCPP, vmodelCH, libVmodelA]
         ToolChain {..} <- askOracle ToolChainQuery
         incFlags <- askOracle VerilatorFlagsQuery
-        cmd_ cxx incFlags "-c" vmodelCCPP "-o" out
+        cmd_ cxx incFlags "-fPIC -c" vmodelCCPP "-o" out
 
       libVmodelCA %> \out -> do
         need [vmodelCO, libVmodelA, libverilatedA]

@@ -54,8 +54,6 @@ import Distribution.Utils.Path
   )
 import GHC.Generics (Generic)
 
-type Linkage = (ComponentName, Target)
-
 -- | Target is
 data LinkOpt = LinkOpt
   { includePath :: SymbolicPath Pkg (Dir Include),
