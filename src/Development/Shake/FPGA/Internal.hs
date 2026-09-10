@@ -460,6 +460,7 @@ rulesFor CompiledBuildConfig {..} = do
           {-\# LANGUAGE ForeignFunctionInterface \#-}
           {-\# LANGUAGE RecordWildCards \#-}
           {-\# LANGUAGE DeriveGeneric \#-}
+          {-\# OPTIONS_GHC -fno-warn-unused-imports \#-}
           module Verilated where
 
           import Prelude
