@@ -11,7 +11,7 @@ fpgaHooks =
   noSetupHooks
     { configureHooks =
         noConfigureHooks
-          { postConfPackageHook = Just pcpHook,
+          { postConfPackageHook = Nothing,
             preConfComponentHook = Just pccHook
           }
     }
