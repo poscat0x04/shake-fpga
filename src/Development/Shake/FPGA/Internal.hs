@@ -515,7 +515,7 @@ rulesFor CompiledBuildConfig {..} = do
         let verilateT = tgt "verilate"
         let clashT = tgt "clash"
         phony bitT $ need [bitStreamFile]
-        phony verilateT $ need [libVmodelA]
+        phony verilateT $ need [fullVmodelCO, verilatedHSC]
         phony clashT $ need [manifestFile]
         phony alias $
           need [bitT, verilateT, clashT]
